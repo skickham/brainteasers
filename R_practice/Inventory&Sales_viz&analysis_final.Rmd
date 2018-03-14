@@ -1,0 +1,233 @@
+---
+title: "Practice Exam"
+output:
+  html_document:
+    theme: united
+    highlight: tango
+    toc: true
+    toc_depth: 1
+    fontsize: 12pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+For this practice exam, we mainly focus on data cleaning and data visualizations.
+
+For problems 2 and 3, you should mainly use **dplyr** and **ggplot2** to construct some plots and also provide **brief interpretations** about your findings.
+
+## Problem 1: Dataset Import & Cleaning
+
+The data comes from a global company, including orders from 2012 to 2015. Import the dataset **Order** and do some basic EDA. 
+
+Check **"Profit"** and **"Sales"** in the dataset, convert these two columns to numeric data.
+
+```{r prob1}
+library(data.table)
+library(VIM)
+library(caret)
+library(ggplot2)
+library(dplyr)
+
+orders = fread('./data/Orders.csv') # stringsAsFactors set to False already
+#View(orders)
+head(orders)
+#tail(orders)
+sapply(orders, class)
+names(orders)
+str(orders)
+dim(orders)   #nrow() & ncol() show same
+summary(orders)
+
+#order.date and ship.date should be datetime
+orders$Ship.Date = as.Date(orders$Ship.Date, '%m/%d/%y')
+orders$Order.Date = as.Date(orders$Order.Date, '%m/%d/%y')
+
+#profit and sales should be numeric
+orders$Profit <- as.numeric(sub("\\$","", orders$Profit))
+orders$Sales <- as.numeric(sub("\\$","", orders$Sales))
+
+sapply(orders, class)  #checks out 
+
+#histograms of numeric
+hist(orders$Discount)
+hist(orders$Profit)    # some neg profit ??
+hist(orders$Sales)    #long tail
+hist(orders$Shipping.Cost)
+
+
+#distinct categories
+unique(orders$Category)
+unique(orders$Sub.Category)
+unique(orders$Market)
+unique(orders$Region)
+#boxplots of characters
+boxplot(orders$Profit ~ orders$Category, col="purple", ylim=c(-200,400))
+boxplot(orders$Profit ~ orders$Sub.Category, col="blue", ylim=c(-200,400))
+boxplot(orders$Profit ~ orders$Region, col="red", ylim=c(-200,400))
+boxplot(orders$Profit ~ orders$Market, col="green", ylim=c(-200,400))
+        
+        
+#checking missingness
+sapply(orders, function(x) sum(is.na(x)))
+#postal.code missing 41296 (80%)
+#sales missing 2626 (5%)
+#profit missing 225 (0.4%)
+round(sapply(orders, function(x) sum(is.na(x)))/dim(orders)[1]*100, 1)
+sum(!complete.cases(orders))/nrow(orders)
+# 81% missing, but mainly due to postal code which maybe won't matter too much for analysis, maybe MNAR if not in america???
+md.pattern(orders)
+aggr(orders)
+
+
+
+```
+
+## Problem 2: Inventory Management
+
+Retailers that depend on seasonal shoppers have a particularly challenging job when it comes to inventory management. Your manager is making plans for next year's inventory.
+
+He wants you to answer the following questions:
+
+  1. Is there any seasonal sales trend in your company? 
+  2. Is there any seasonal trend of **different categories ** of products?
+
+**Note:** Each order has a column called Quantity.
+
+```{r prob2}
+
+colMeans(orders[, c("Quantity", "New_sales", "New_profit")])
+
+colMeans(orders[, c("Quantity", "New_sales", "New_profit")])
+
+
+time <- orders %>%
+  group_by(Order.Date) %>%
+  summarise(daily_quantities=sum(Quantity), 
+            daily_sales=sum(New_sales), 
+            daily_profit=sum(New_profit))
+
+ggplot(time, aes(Order.Date, daily_quantities)) + 
+  geom_line() +
+  xlab("Time") + 
+  ylab("Daily Orders Quantity") +
+  theme_bw() +
+  geom_smooth()
+
+
+
+
+
+#histogram of dates
+ggplot(orders, aes(x = Order.Date)) + geom_histogram()
+#seems to be spikes in orders at end of year for holidays
+ggplot(orders, aes(x = Order.Date, y = Quantity)) + geom_bar(stat='identity')
+#pattern in quantity of order seems harder to detect. 
+#possibly lower quantities in first quarter but then goes up after that
+
+
+#add a month column to examine data by month
+orders$Month = format(orders$Order.Date, '%m')
+sort(unique(orders$Month)) #It worked!
+class(orders$Month)
+
+ggplot(orders, aes(x = Month)) + geom_bar()
+#peaks in june, sept, nov, dec
+#low jan - apr & july
+
+#by categories
+# orders_bycat = orders %>% 
+#   group_by(Category)
+# line plot of three categories shows how trends follow each other 
+ggplot(orders, aes(x = Month)) + geom_bar(aes(fill = Category))
+ggplot(orders, aes(x = Month)) + geom_bar(aes(fill = Category), position = 'dodge')
+#office supplies are hottest item but all categories follow same trend
+ggplot(orders, aes(x = Month)) + geom_bar(aes(fill = Sub.Category), position = "fill")
+#subcategory also pretty consistent throughout
+```
+
+## Problem 3: Why did customers make returns?
+Your manager required you to give a brief report (**Plots + Interpretations**) on returned orders from the **Returns** dataset.
+
+1. How much profit did we lose for each year?
+2. How many customer returned more than once? more than 10 times? 
+3. Which regions are more likely to return orders?
+4. Which categories (sub-categories) of products are more likely to be returned?
+
+*Hint*: 
+
+1. Import **Returns.csv**
+2. Merge the **Returns** dataframe you imported with the **Orders** dataframe.
+
+```{r prob3}
+# Fill in your code here
+returns = fread('./data/Returns.csv')
+head(returns)
+names(returns)
+names(orders)
+#rename order id col
+colnames(returns)[2] = "Order.ID"
+
+# merge two data frame on order.ID (inner)
+merged_df_inner = merge(orders, returns, by = "Order.ID")
+head(merged_df_inner)
+nrow(merged_df_inner)
+
+#Q1: How much profit did we lose per year?
+merged_df_inner$Year =  format(merged_df_inner$Order.Date, '%y')
+merged_df_inner %>% group_by(Year) %>%  summarise(Profit = sum(Profit, na.rm = TRUE))
+#between 10000 and 20000 per year
+
+
+#????why does mine disagree with his
+
+#although I saw some negative profits in there so I'm not sure how to handle those ??????????????????????????
+
+
+#Q2: How many customers returned more than once
+customer_count = merged_df_inner %>% 
+  group_by(Customer.ID) %>% 
+  count()
+customer_count = arrange(customer_count, desc(n))
+nrow(filter(customer_count, n> 1))   #11350 out of 51000 (he only got 1159 customers.....weird) total orders??? wow!
+nrow(filter(customer_count, n> 10))   #only 260 (still seems extreme)
+
+#Q3: which regions more likely to return orders
+returns[!is.na(returns$Region) & returns$Region == 'Eastern Canada','Region'] <- 'Canada'
+returns[!is.na(returns$Region) & returns$Region == 'Western Canada','Region'] <- 'Canada'
+
+merged_df_outer = merge(orders, returns, by = "Order.ID", all = TRUE)  #outer join now
+regions = merged_df_outer %>% group_by(Region.y) %>% count()
+
+regions_total = merged_df_outer %>% group_by(Region.x) %>% count()
+merged_regions = merge(regions, regions_total, by.x = "Region.y", by.y = "Region.x", all = TRUE)
+#canada vs. Eastern and western Canada # go back and rename and combine
+
+merged_regions = merged_regions %>% mutate(percent = round(n.x / n.y * 100,1))
+merged_regions %>% arrange(desc(percent))
+#Western US, Eastern Asia, Southern Europe, Southern Africa, Southern US all above 5% returns
+
+
+#Q4: categories/subcategories more likely to be returned 
+
+categories =  merged_df_inner%>% group_by(Category) %>% count()
+categories_total = merged_df_outer %>%  group_by(Category) %>%  count()
+
+merged_cats = merge(categories, categories_total, by = "Category", all = TRUE)
+merged_cats = merged_cats %>% mutate(percent = round(n.x / n.y * 100,1))
+merged_cats %>% arrange(desc(percent))
+#all categories show 4.3/4.4% returns
+
+
+subcategories =  merged_df_inner%>% group_by(Sub.Category) %>% count()
+subcategories_total = merged_df_outer %>%  group_by(Sub.Category) %>%  count()
+
+merged_subcats = merge(subcategories, subcategories_total, by = "Sub.Category", all = TRUE)
+merged_subcats = merged_subcats %>% mutate(percent = round(n.x / n.y * 100,1))
+merged_subcats %>% arrange(desc(percent))
+
+#Labels and tables most returned
+#fasteers and appliances least returned
+
+```

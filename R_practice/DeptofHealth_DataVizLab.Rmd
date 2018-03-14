@@ -1,0 +1,268 @@
+---
+title: "Data Visualization from Scratch"
+author: "NYC Data Science Academy"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Introduction 
+
++ NYC's Department of Health and Mental Hygiene (DOHMH) conducts unannounced inspections of restaurants at least once a year to check food handling, food temperature, personal hygiene, and vermin control. Since 2010, NYC restaurants have to prominently post their Grade (e.g. A/B/C) which empowers diners with decision-making information and incentivizes establishments to improve their hygiene.
+
++ Download the csv file from [here](https://nycopendata.socrata.com/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/xx67-kt59) and rename it to `data.csv`. Move the file to the same directory of your markdown file and use relative path to read it.
+
++ After you or your team finishes the lab, please push your rmarkdown file (**w/o data**) to the corresponding folder under the homework repository. You can easily do it by adding a gitignore file in your submission. It's a list of files you want git to ignore in your work directory. You can take the one in your homework repository as ane example or read the [documentation](https://git-scm.com/docs/gitignore). 
+[Here](https://github.com/github/gitignore) is a collection of template gitignore file for different programming languages.
+
+
+### 1. Data Preprocessing
+
+#### 1.1 Load libraries
+```{r, message=FALSE}
+library(dplyr)
+library(ggplot2)
+getwd()
+```
+
+#### 1.1 Load dataset
+```{r load_data, cache=TRUE}
+raw.df = raw_df
+raw.df <- tbl_df(raw.df)
+View(raw.df)
+```
+
+#### 1.2 Clean your data
+* Convert all the column names to lower cases and rename the cusine.description column to cusine.
+* Convert the `inspection.date` column from character to date format.
+* If we want to perform analysis for each month, then the date column would be pretty annoying because you have different date for each month. Mutate a new column called `month` that extract the month from `inspection.date` and convert it to numeric. For example, 03/24/2016 -> 03
+    + the `strftime` function might be helpful
+* We have scores for some of the observations but their grades are missing. Impute the missing values in grade column with the following rules:
+    + 0 < score < 14: A
+    + 14 <= score < 28: B
+    + score > 28: C
+* Rename the description from the action column to something short so it won't blow up your graph.
+    + "Violations were cited in the following area(s)." => "violations"
+    + "Establishment Closed by DOHMH.  Violations were cited in the following area(s) and those requiring immediate action were addressed." => "closed"
+    + "Establishment re-closed by DOHMH" => "reclosed"
+    + "No violations were recorded at the time of this inspection." => "no violations"
+    + "Establishment re-opened by DOHMH" => "reopened"
+    + Hint: `gsub` function might be helpful.
+    + **reclosed** means they failed the second time during the same inspection cycle and **reopened** means they passed.
+* We want to filter out missing values to make our life easier for the analysis later.
+    + Filter out missing values from the `boro` column.
+    + Filter out missing values and negative values from the `score` column.
+    + Filter out any `inspection date` that doesn't make any sense.
+* Select the following columns from `raw.df`: `camis`, `boro`, `cuisine`, `inspection.date`, `action`, `score`, `grade`, `month`
+* Return only the unqiue observations from the previous step and save them as a new data frame called `inspections`
+
+
+```{r preprocessing, cache=TRUE}
+# Convert all the column names to lower cases and rename the cusine.description column to cusine.
+names(raw.df) = tolower(names(raw.df))
+colnames(raw.df)[colnames(raw.df) == 'cuisine description'] = 'cuisine'
+
+# Convert the inspection.date column from character to date format.
+raw.df$`inspection date` = as.Date(raw.df$`inspection date`, '%m/%d/%Y')
+
+
+
+# Extract the month from the inspection.date column.
+#mutate(raw.df, month = format(as.Date(raw.df$`inspection date`), "%m") )
+raw.df = mutate(raw.df, month = strftime(raw.df$`inspection date`, '%m'))
+
+# Impute the missing values
+raw.df$grade[raw.df$score < 14 & 
+               raw.df$score >= 0 & is.na(raw.df$grade)] = 'A'
+raw.df$grade[raw.df$score >= 14 & 
+               raw.df$score < 28 & is.na(raw.df$grade)] = 'B'
+raw.df$grade[raw.df$score >= 28 &
+               is.na(raw.df$grade)] = 'C'
+
+
+# Rename the description from the action column to something short so it won't blow up your graph.
+distinct(group_by(raw.df, action))
+raw.df$action = gsub('Violations were.*', 'violations', raw.df$action)
+raw.df$action = gsub('No.*', 'no violations', raw.df$action)
+raw.df$action = gsub('.*re-opened.*', 'reopened', raw.df$action)
+raw.df$action = gsub('.*re-closed.*', 'reclosed', raw.df$action)
+raw.df$action = gsub('.*Closed.*', 'closed', raw.df$action)
+
+View(raw.df)
+
+# We want to filter out missing values to make our lives easier for the analysis later.
+raw.df = filter(raw.df, ! is.na(boro) &
+         boro != 'Missing' &
+         ! is.na(score) &
+         score >= 0 &
+         strftime(raw.df$`inspection date`, '%Y') >= 2000)
+
+class(raw.df)
+dim(raw.df)    #396,352 observations
+
+sort(strftime(raw.df$`inspection date`, '%Y')) < 2000
+
+
+distinct(group_by(filter(raw.df, 
+                         ! is.na(boro) & 
+                           boro != 'Missing' &
+                           ! is.na(score) & 
+                           score >= 0), 
+                  boro))
+
+
+View(distinct(group_by(filter(raw.df, 
+                         ! is.na(boro) & 
+                           boro != 'Missing' &
+                           ! is.na(score) & 
+                           score >= 0), 
+                  score)))
+
+
+# Select the following columns from raw.df: camis, boro, cuisine, inspection.date, action, score, grade, month
+raw.df = raw.df %>% 
+  select(camis, boro, cuisine, 9, action, score, grade, month) %>% 
+  distinct()
+
+
+# Unique inspections
+inspections = raw.df
+
+
+```
+
+
+## 2. Data Visualization
+### Example questions we want to answer from this dataset
+
+- How do a restaurant's location and type of cuisine affect its inspection results?
+- Do restaurants in Manhattan have better scores than those of restaurants in Queens or the Bronx?
+- Are Manhattan restaurants cleaner than those in Queens or the Bronx? 
+- Do restaurants of your favorite cuisine perform better or worse in health inspections than the rest of the restaurants?
+
+### 2.1 Inspection Grade vs Borough
+- Bar plot: Restaurants by borough and grade
+- What is your conclusion?
+```{r}
+g <- ggplot(data = inspections, aes(x = grade))
+g + geom_bar() + facet_wrap(~boro)
+
+
+```
+
+### 2.2 Inspection Grade vs Cuisine
+- Bar plot: Restaurants by cuisine and latest grade
+- There are too many cuisine in the dataset and it will make the plot hard to read. Let's just focus on the top 20 cuisines.
+- What is your conclusion?
+```{r}
+
+
+top20 = inspections %>% 
+  group_by(cuisine) %>% 
+  summarise(count = n()) %>% 
+  arrange(desc(count)) %>% 
+  top_n(20)
+
+joined = inner_join(inspections, top20, by = 'cuisine')
+#distinct(group_by(joined, cuisine))
+
+ggplot(data = joined, aes(x = cuisine)) + geom_bar(aes(fill = grade), position = 'dodge')
+
+#OR with facets
+ggplot(data = joined, aes(x = cuisine)) + geom_bar(aes(fill = grade)) + facet_wrap(~grade)
+
+
+
+```
+
+### 2.3 Scores vs. Borough
+- Since grades couldn't differentiate boroughs, let's plot restaurants by scores instead and use a density plot to account for the disparity in number of restaurants by borough.
+- Density plot: Restaurants by score and borough
+- What is your conclusion?
+```{r}
+ggplot(data = inspections, aes(x = score)) + geom_density(aes(color = boro))
+
+```
+
+## What about inspection closures?
+- Scores don't tie directly to restaurant closures (e.g. public health hazard)
+
+### 2.4 Closures vs. Borough
+
+- Reclosed means they failed the second time during the same inspection cycle.
+- Defined the following ratios:
+    - Inspection closure ratio for each borough: % of inspections that lead to the restaurant being closed (including closed and reclosed)
+    - Repeat closure ratio for each borough: % of restaurants that were closed more than once for different inspection cycles (just count the number of closed)
+- It could be either a barplot with two different ratios for each borough or a scatterplot with two ratios as x and y axises.
+- What is your conclusion?
+```{r}
+closure_ratio <- inspections %>%
+  group_by(boro) %>%
+  summarise(closure_ratio = sum(action == 'closed' | 
+                                  action == 'reclosed')/n(), 
+            reclosure_ratio = sum(action == 'reclosed')/n())
+
+ggplot(closure_ratio, aes(x = closure_ratio, y = reclosure_ratio)) +
+  geom_point(aes(color = boro)) + geom_smooth(method = 'lm', se = F)
+```
+
+### 2.5 Closures vs. Cuisine and Borough
+- Finally, what if we combined both dimensions of location and cuisine? Intuitively, certain cuisines could fare better or worse in health inspections depending on the neighborhood. Used faceted bar plots of inspection closure ratios by borough with the top 20 cuisine types.
+- Facect barplots of insepction closure ratios by borough with top 20 cuisine types.
+- What is your conclusion?
+```{r}
+#'joined' df from above includes top 20 cuisines
+closure_ratio_by_cuisine = joined %>% 
+  group_by(boro, cuisine) %>% 
+  summarise(closure_ratio = sum(action == 'closed' | action == 'reclosed')/
+              n())
+
+cuisine_closure = inner_join(joined, closure_ratio_by_cuisine, by = c('boro', 'cuisine')) %>% 
+  distinct
+
+cuisine_closure2 = select(cuisine_closure, 
+                          boro, cuisine, closure_ratio) %>% distinct
+
+
+ggplot(data = cuisine_closure2, aes(x = boro, y = closure_ratio)) + geom_bar(stat= 'identity', aes(fill = boro)) + facet_wrap(~cuisine)
+
+
+
+```
+
+
+### 2.6 Trend of score by month
+- Find the trend of average scores by month and borough. Graph your result.
+- What is your conclusion?
+```{r}
+avg_score = inspections %>% 
+  group_by(boro, month) %>% 
+  summarise(avg_score = mean(score))
+
+avg_score$month = as.numeric(avg_score$month)
+
+ggplot(avg_score, aes(x = month, y = avg_score)) + geom_point(aes(color = boro)) + geom_smooth(aes(color = boro), se = F)
+
+
+```
+
+
+### 2.7 Trend of inspection closure ratio by month
+- Find the trend of the inspection closure ratio by month and borough. Graph your result.
+- What is your conclusion?
+```{r}
+closure_by_month = inspections %>% 
+  group_by(boro, month) %>% 
+  summarise(closure_ratio = sum(action == 'closed' | 
+                                  action == 'reclosed')/n())
+
+closure_by_month$month = as.numeric(closure_by_month$month)
+class(closure_by_month$month)   #check
+
+ggplot(closure_by_month, aes(x = month, y = closure_ratio)) + geom_point(aes(color = boro)) + geom_smooth(aes(color = boro), se = F)
+```
+
